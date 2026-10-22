@@ -9,7 +9,7 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 print("Asking Gemini... please wait")
 response = client.models.generate_content(
     model="gemini-3.8-flash",
-    contents="write me a code for printitng hello world in python",
+    contents="what time is it in Delhi, India",
 )
 
 print(response.text)
