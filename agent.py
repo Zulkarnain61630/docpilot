@@ -1,7 +1,8 @@
 import os
 import time
+import itertools
+import threading
 from datetime import datetime
-
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
@@ -81,15 +82,22 @@ def ask_gemini(messages):
         except errors.APIError as e:
             if e.code not in (429, 500, 503) or attempt == 4:
                 raise
-            print(f"  [Progressing (error {e.code}), retrying in {wait} seconds...]")
+            print(f"\r [Progressing (error {e.code}), retrying in {wait} seconds...]")
             time.sleep(wait)
             wait = wait * 2
 
-
+#---------------animation function----------
+def spinner(stop_signal):
+    for shape in itertools.cycle(["▲", "■", "●"]):
+        if stop_signal.is_set():
+            break
+        print(f"\r  {shape} thinking...", end="", flush=True)
+        time.sleep(0.3)
+    print("\r                    \r", end="", flush=True)
 # ---------- The agent loop ----------
 
-def run_agent(question):
-    messages = [types.Content(role="user", parts=[types.Part(text=question)])]
+def run_agent(question, messages):
+    messages.append(types.Content(role="user", parts=[types.Part(text=question)]))
 
     for step in range(MAX_STEPS):
         response = ask_gemini(messages)
@@ -100,8 +108,8 @@ def run_agent(question):
 
         results = []
         for call in response.function_calls:
-            print(f"  -> using tool: {call.name}")
-            print(f"     with inputs: {call.args}")
+            print(f"\r  -> using tool: {call.name}")
+            print(f"\r     with inputs: {call.args}")
             output = TOOLS[call.name](**dict(call.args or {}))
             results.append(types.Part.from_function_response(
                 name=call.name, response={"result": output},
@@ -110,7 +118,21 @@ def run_agent(question):
 
     return "Sorry, I gave up after too many steps."
 
+print("DocPilot ready. Type 'quit' to exit.\n")
+messages = []
 
-print(run_agent("What is 17.5% of 2480?"))
-print(run_agent("What is 48213 times 9177?"))
-print(run_agent("How many minutes are left until midnight?"))
+while True:
+    question = input("You: ")
+    if question.lower() in ("quit", "exit"):
+        break
+
+    stop_signal = threading.Event()
+    animation = threading.Thread(target=spinner, args=(stop_signal,), daemon=True)
+    animation.start()
+    try:
+        answer = run_agent(question, messages)
+    finally:
+        stop_signal.set()
+        animation.join()
+
+    print("DocPilot:", answer, "\n")
