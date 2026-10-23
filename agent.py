@@ -6,6 +6,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -13,11 +14,29 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL = "gemini-3.8-flash"
 MAX_STEPS = 5
 
+#------------System Prompt----------
+
+SYSTEM_PROMPT = """You are DocPilot, a friendly and helpful assistant.
+
+Rules:
+1. Always use the calculator tool for any arithmetic. Never calculate in your head.
+2. Use get_current_time whenever you need today's date or the current time.
+3. Keep answers short and clear: 1 to 3 sentences unless the user asks for more.
+4. Write in plain text. Do not use Markdown symbols like ** or #.
+5. If you don't know something and no tool can help, say so honestly. Never make up facts.
+"""
 
 # ---------- Step 1: the tool functions (for Python) ----------
 
-def get_current_time():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def get_current_time(timezone="local"):
+    if timezone == "local":
+        now = datetime.now()
+    else:
+        try:
+            now = datetime.now(ZoneInfo(timezone))
+        except Exception:
+            return f"Error: unknown timezone '{timezone}'. Use names like 'Asia/Kolkata' or 'Europe/London'."
+    return now.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def calculator(expression):
@@ -34,8 +53,17 @@ def calculator(expression):
 
 time_tool = types.FunctionDeclaration(
     name="get_current_time",
-    description="Get the current local date and time.",
-    parameters={"type": "object", "properties": {}},
+    description="Get the current date and time, either locally or in a specific timezone.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "timezone": {
+                "type": "string",
+                "description": "Timezone name like 'Asia/Kolkata' or 'Europe/London'. "
+                               "Leave out to get the user's local time.",
+            },
+        },
+    },
 )
 
 calculator_tool = types.FunctionDeclaration(
@@ -55,6 +83,7 @@ calculator_tool = types.FunctionDeclaration(
 )                                                          # NEW
 
 config = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
     tools=[types.Tool(function_declarations=[time_tool, calculator_tool])],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
 )
