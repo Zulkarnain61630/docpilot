@@ -109,7 +109,8 @@ def ask_gemini(messages):
                 config=config,
             )
         except errors.APIError as e:
-            if e.code not in (429, 500, 503) or attempt == 4:
+            if e.code not in (429, 500, 503) or attempt == 4 or "PerDay" in str(e):
+                raise
                 raise
             print(f"\r [Progressing (error {e.code}), retrying in {wait} seconds...]")
             time.sleep(wait)
@@ -160,6 +161,8 @@ while True:
     animation.start()
     try:
         answer = run_agent(question, messages)
+    except errors.APIError as e:
+        answer = f"Sorry, I couldn't reach Gemini (error {e.code}). Please try again later."
     finally:
         stop_signal.set()
         animation.join()
