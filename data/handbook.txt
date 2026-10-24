@@ -1,0 +1,11 @@
+Instructor: The course is taught by Dr. Amira Qadri. Office hours are on Tuesdays and Thursdays from 3 PM to 5 PM in Room 214.
+
+Grading: The final grade is made up of assignments 40%, midterm exam 20%, final project 30%, and class participation 10%. A grade of 50% or higher is needed to pass.
+
+Late submission policy: Assignments submitted late lose 10% of their marks for each day they are late. Work submitted more than 5 days late receives zero marks. Extensions are only given for medical reasons with a doctor's note.
+
+Final project: The final project is done in teams of 3 students. Each team builds a machine learning model, writes a 6-page report, and gives a 10-minute presentation in week 14. The project proposal is due in week 6.
+
+Required software: Students must use Python 3.11 or newer, with scikit-learn, pandas and Jupyter notebooks. A free Google Colab account is enough.
+
+AI tools policy: AI coding assistants may be used for assignments, but students must say which tools they used and must be able to explain every line of their code.

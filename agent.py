@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
 from zoneinfo import ZoneInfo
+from rag import embed, load_chunks, meaning_search
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -24,7 +25,14 @@ Rules:
 3. Keep answers short and clear: 1 to 3 sentences unless the user asks for more.
 4. Write in plain text. Do not use Markdown symbols like ** or #.
 5. If you don't know something and no tool can help, say so honestly. Never make up facts.
+6. For any question about the user's course, use search_documents and answer only from what it returns.
+7. Always mention which file the answer came from, like (Source: handbook.txt).
 """
+
+print("Loading documents...")
+CHUNKS = load_chunks()
+CHUNK_VECTORS = embed([chunk["text"] for chunk in CHUNKS])
+print(f"Loaded {len(CHUNKS)} chunks.")
 
 # ---------- Step 1: the tool functions (for Python) ----------
 
@@ -48,6 +56,13 @@ def calculator(expression):
         return str(eval(expression, {"__builtins__": {}}))
     except Exception as e:
         return f"Error: {e}"
+
+def search_documents(query):
+    results = meaning_search(query, CHUNKS, CHUNK_VECTORS, top_k=3)
+    lines = []
+    for score, chunk in results:
+        lines.append(f"[Source: {chunk['source']}] {chunk['text']}")
+    return "\n\n".join(lines)
 
 # ---------- Step 2: the tool descriptions (for Gemini) ----------
 
@@ -82,9 +97,25 @@ calculator_tool = types.FunctionDeclaration(
     },
 )                                                          # NEW
 
+search_tool = types.FunctionDeclaration(
+    name="search_documents",
+    description="Search the user's course documents (handbook, policies, deadlines, "
+                "grading, instructor). Use this for any question about the course.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What to look for, in plain words",
+            },
+        },
+        "required": ["query"],
+    },
+)
+
 config = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=[types.Tool(function_declarations=[time_tool, calculator_tool])],
+    tools=[types.Tool(function_declarations=[time_tool, calculator_tool, search_tool])],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
 )
 
@@ -93,7 +124,8 @@ config = types.GenerateContentConfig(
 
 TOOLS = {
     "get_current_time": get_current_time,
-    "calculator": calculator,                                  # NEW
+    "calculator": calculator,     
+    "search_documents": search_documents,
 }
 
 
