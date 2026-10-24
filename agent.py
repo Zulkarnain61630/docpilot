@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
 from zoneinfo import ZoneInfo
-from rag import embed, load_chunks, meaning_search
+from rag import search_db
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -28,11 +28,6 @@ Rules:
 6. For any question about the user's course, use search_documents and answer only from what it returns.
 7. Always mention which file the answer came from, like (Source: handbook.txt).
 """
-
-print("Loading documents...")
-CHUNKS = load_chunks()
-CHUNK_VECTORS = embed([chunk["text"] for chunk in CHUNKS])
-print(f"Loaded {len(CHUNKS)} chunks.")
 
 # ---------- Step 1: the tool functions (for Python) ----------
 
@@ -58,10 +53,10 @@ def calculator(expression):
         return f"Error: {e}"
 
 def search_documents(query):
-    results = meaning_search(query, CHUNKS, CHUNK_VECTORS, top_k=3)
+    results = search_db(query, top_k=3)
     lines = []
-    for score, chunk in results:
-        lines.append(f"[Source: {chunk['source']}] {chunk['text']}")
+    for result in results:
+        lines.append(f"[Source: {result['source']}] {result['text']}")
     return "\n\n".join(lines)
 
 # ---------- Step 2: the tool descriptions (for Gemini) ----------

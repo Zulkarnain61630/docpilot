@@ -4,6 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from google import genai
+import chromadb
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -11,6 +12,8 @@ client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 DATA_FOLDER = Path("data")
 EMBEDDING_MODEL = "gemini-embedding-001"
 
+db = chromadb.PersistentClient(path="chroma_db")
+collection = db.get_or_create_collection("docs", metadata={"hnsw:space": "cosine"})
 
 def load_chunks():
     chunks = []
@@ -59,16 +62,30 @@ def meaning_search(question, chunks, chunk_vectors, top_k=2):
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return scored[:top_k]
 
-if __name__ == "__main__":
+def ingest():
     chunks = load_chunks()
-    chunk_vectors = embed([chunk["text"] for chunk in chunks])
+    vectors = embed([chunk["text"] for chunk in chunks])
+    ids = [f"{chunk['source']}-{i}" for i, chunk in enumerate(chunks)]
+    collection.upsert(
+        ids=ids,
+        documents=[chunk["text"] for chunk in chunks],
+        embeddings=vectors,
+        metadatas=[{"source": chunk["source"]} for chunk in chunks],
+    )
+    print(f"Stored {len(chunks)} chunks. Database now holds {collection.count()} chunks.")
 
-    questions = [
-        "What if I hand in my homework after the deadline?",
-        "Can I use ChatGPT for my assignments?",
-        "Who teaches this course?",
-    ]
-    for question in questions:
-        print("\nQuestion:", question)
-        for score, chunk in meaning_search(question, chunks, chunk_vectors):
-            print(f"  {score:.3f} -> {chunk['text'][:60]}")
+def search_db(query, top_k=3):
+    query_vector = embed([query])[0]
+    results = collection.query(
+        query_embeddings=[query_vector],
+        n_results=min(top_k, collection.count()),
+    )
+    found = []
+    for text, meta, distance in zip(results["documents"][0],
+                                    results["metadatas"][0],
+                                    results["distances"][0]):
+        found.append({"source": meta["source"], "text": text, "score": 1 - distance})
+    return found
+
+if __name__ == "__main__":
+    ingest()
