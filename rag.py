@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 import chromadb
+from pypdf import PdfReader
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -17,13 +18,34 @@ collection = db.get_or_create_collection("docs", metadata={"hnsw:space": "cosine
 
 def load_chunks():
     chunks = []
-    for file in DATA_FOLDER.glob("*.txt"):
-        text = file.read_text(encoding="utf-8")
-        for paragraph in text.split("\n\n"):
-            paragraph = paragraph.strip()
-            if paragraph:
-                chunks.append({"source": file.name, "text": paragraph})
+    for file in DATA_FOLDER.iterdir():
+        if file.suffix.lower() == ".txt":
+            text = file.read_text(encoding="utf-8")
+            for paragraph in text.split("\n\n"):
+                paragraph = paragraph.strip()
+                if paragraph:
+                    chunks.append({"source": file.name, "page": 1, "text": paragraph})
+        elif file.suffix.lower() == ".pdf":
+            reader = PdfReader(file)
+            for page_number, page in enumerate(reader.pages, start=1):
+                page_text = page.extract_text() or ""
+                for piece in chunk_text(page_text):
+                    chunks.append({"source": file.name, "page": page_number, "text": piece})
     return chunks
+
+
+def chunk_text(text, size=100, overlap=20):
+    all_words = text.split()
+    chunks = []
+    start = 0
+    while start < len(all_words):
+        piece = all_words[start:start + size]
+        chunks.append(" ".join(piece))
+        if start + size >= len(all_words):
+            break
+        start = start + size - overlap
+    return chunks
+
 
 STOP_WORDS = {"the", "is", "a", "an", "of", "to", "in", "and", "what", "how",
               "do", "i", "my", "for", "are", "on", "with", "if", "it", "can"}
@@ -63,14 +85,18 @@ def meaning_search(question, chunks, chunk_vectors, top_k=2):
     return scored[:top_k]
 
 def ingest():
+    existing = collection.get()["ids"]
+    if existing:
+        collection.delete(ids=existing)
+
     chunks = load_chunks()
     vectors = embed([chunk["text"] for chunk in chunks])
-    ids = [f"{chunk['source']}-{i}" for i, chunk in enumerate(chunks)]
+    ids = [f"{chunk['source']}-p{chunk['page']}-{i}" for i, chunk in enumerate(chunks)]
     collection.upsert(
         ids=ids,
         documents=[chunk["text"] for chunk in chunks],
         embeddings=vectors,
-        metadatas=[{"source": chunk["source"]} for chunk in chunks],
+        metadatas=[{"source": chunk["source"], "page": chunk["page"]} for chunk in chunks],
     )
     print(f"Stored {len(chunks)} chunks. Database now holds {collection.count()} chunks.")
 
@@ -84,8 +110,13 @@ def search_db(query, top_k=3):
     for text, meta, distance in zip(results["documents"][0],
                                     results["metadatas"][0],
                                     results["distances"][0]):
-        found.append({"source": meta["source"], "text": text, "score": 1 - distance})
+        found.append({"source": meta["source"], "page": meta["page"],
+                      "text": text, "score": 1 - distance})
     return found
+
+def list_sources():
+    all_metadata = collection.get(include=["metadatas"])["metadatas"]
+    return sorted({meta["source"] for meta in all_metadata})
 
 if __name__ == "__main__":
     ingest()

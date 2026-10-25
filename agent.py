@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
 from zoneinfo import ZoneInfo
-from rag import search_db
+from rag import list_sources, search_db
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
@@ -25,8 +25,13 @@ Rules:
 3. Keep answers short and clear: 1 to 3 sentences unless the user asks for more.
 4. Write in plain text. Do not use Markdown symbols like ** or #.
 5. If you don't know something and no tool can help, say so honestly. Never make up facts.
-6. For any question about the user's course, use search_documents and answer only from what it returns.
-7. Always mention which file the answer came from, like (Source: handbook.txt).
+6. For any question that might be answered by the user's documents, use search_documents and answer only from what it returns.
+7. Always mention which file and page the answer came from, like (Source: notes.pdf, page 2).
+8. If a question could refer to more than one document or topic, do not answer yet. Reply only with one short question listing the possible topics as numbers, in this format:
+   Do you mean:
+   1. (first topic)
+   2. (second topic)
+   Answer only after the user chooses.
 """
 
 # ---------- Step 1: the tool functions (for Python) ----------
@@ -56,7 +61,7 @@ def search_documents(query):
     results = search_db(query, top_k=3)
     lines = []
     for result in results:
-        lines.append(f"[Source: {result['source']}] {result['text']}")
+        lines.append(f"[Source: {result['source']}, page {result['page']}] {result['text']}")
     return "\n\n".join(lines)
 
 # ---------- Step 2: the tool descriptions (for Gemini) ----------
@@ -91,11 +96,13 @@ calculator_tool = types.FunctionDeclaration(
         "required": ["expression"],
     },
 )                                                          # NEW
+SOURCES = list_sources()
 
 search_tool = types.FunctionDeclaration(
     name="search_documents",
-    description="Search the user's course documents (handbook, policies, deadlines, "
-                "grading, instructor). Use this for any question about the course.",
+        description="Search the user's own documents. Available files: "
+            + ", ".join(SOURCES)
+            + ". Use this for any question that might be answered by these files.",
     parameters={
         "type": "object",
         "properties": {
@@ -167,7 +174,10 @@ def run_agent(question, messages):
         for call in response.function_calls:
             print(f"\r  -> using tool: {call.name}")
             print(f"\r     with inputs: {call.args}")
-            output = TOOLS[call.name](**dict(call.args or {}))
+            try:
+                output = TOOLS[call.name](**dict(call.args or {}))
+            except Exception as e:
+                output = f"Error running {call.name}: {e}"
             results.append(types.Part.from_function_response(
                 name=call.name, response={"result": output},
             ))
