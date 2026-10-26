@@ -8,9 +8,14 @@ from google import genai
 from google.genai import errors, types
 from zoneinfo import ZoneInfo
 from rag import list_sources, search_db
+from tavily import TavilyClient
+import httpx
+import re
+from pathlib import Path
 
 load_dotenv()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
 
 MODEL = "gemini-3.8-flash"
 MAX_STEPS = 5
@@ -32,6 +37,9 @@ Rules:
    1. (first topic)
    2. (second topic)
    Answer only after the user chooses.
+9. Check the user's documents first. Use web_search only for current events, or when the documents don't have the answer. When you use it, cite the website link.
+10. Web sources can disagree. If they do, say so briefly and explain the difference if you can, instead of picking one number.
+11. Only save notes when the user asks. Never set overwrite to true unless the user has clearly said yes to replacing that specific note.
 """
 
 # ---------- Step 1: the tool functions (for Python) ----------
@@ -63,6 +71,28 @@ def search_documents(query):
     for result in results:
         lines.append(f"[Source: {result['source']}, page {result['page']}] {result['text']}")
     return "\n\n".join(lines)
+
+def web_search(query):
+    response = tavily.search(query, max_results=3)
+    lines = []
+    for result in response["results"]:
+        lines.append(f"[Source: {result['url']}] {result['title']}\n{result['content'][:800]}")
+    return "\n\n".join(lines)
+
+NOTES_FOLDER = Path("notes")
+
+
+def save_note(title, content, overwrite=False):
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "-", title).strip("-").lower() or "note"
+    path = NOTES_FOLDER / f"{safe_name}.md"
+    NOTES_FOLDER.mkdir(exist_ok=True)
+
+    if path.exists() and not overwrite:
+        return (f"A note called '{path.name}' already exists. Ask the user to confirm "
+                f"before replacing it, then call save_note again with overwrite=true.")
+
+    path.write_text(f"# {title}\n\n{content}\n", encoding="utf-8")
+    return f"Saved to notes/{path.name}"
 
 # ---------- Step 2: the tool descriptions (for Gemini) ----------
 
@@ -115,9 +145,50 @@ search_tool = types.FunctionDeclaration(
     },
 )
 
+web_tool = types.FunctionDeclaration(
+    name="web_search",
+    description="Search the internet. Use only for current events, recent facts, or "
+                "questions the user's documents cannot answer.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search words, like you would type into a search engine",
+            },
+        },
+        "required": ["query"],
+    },
+)
+
+note_tool = types.FunctionDeclaration(
+    name="save_note",
+    description="Save a note as a file in the notes folder, when the user asks to save or remember something.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "A short title for the note",
+            },
+            "content": {
+                "type": "string",
+                "description": "The text to save",
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "Set to true ONLY after the user has clearly confirmed replacing an existing note",
+            },
+        },
+        "required": ["title", "content"],
+    },
+)
+
+#-----------------Configuring the agent----------
+
 config = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
-    tools=[types.Tool(function_declarations=[time_tool, calculator_tool, search_tool])],
+    tools=[types.Tool(function_declarations=[time_tool, calculator_tool, search_tool, web_tool, note_tool])],
     automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
 )
 
@@ -128,6 +199,8 @@ TOOLS = {
     "get_current_time": get_current_time,
     "calculator": calculator,     
     "search_documents": search_documents,
+    "web_search": web_search,
+    "save_note": save_note,
 }
 
 
@@ -142,11 +215,12 @@ def ask_gemini(messages):
                 contents=messages,
                 config=config,
             )
-        except errors.APIError as e:
-            if e.code not in (429, 500, 503) or attempt == 4 or "PerDay" in str(e):
+        except (errors.APIError, httpx.HTTPError) as e:
+            code = getattr(e, "code", None)
+            retryable = isinstance(e, httpx.HTTPError) or code in (429, 500, 503)
+            if not retryable or attempt == 4 or "PerDay" in str(e):
                 raise
-                raise
-            print(f"\r [Progressing (error {e.code}), retrying in {wait} seconds...]")
+            print(f"\r  [Progressing ({code or 'connection problem'}), retrying in {wait} seconds...]")
             time.sleep(wait)
             wait = wait * 2
 
@@ -184,24 +258,24 @@ def run_agent(question, messages):
         messages.append(types.Content(role="user", parts=results))
 
     return "Sorry, I gave up after too many steps."
+if __name__ == "__main__":
+    print("DocPilot ready. Type 'quit' to exit.\n")
+    messages = []
 
-print("DocPilot ready. Type 'quit' to exit.\n")
-messages = []
+    while True:
+        question = input("You: ")
+        if question.lower() in ("quit", "exit"):
+            break
 
-while True:
-    question = input("You: ")
-    if question.lower() in ("quit", "exit"):
-        break
-
-    stop_signal = threading.Event()
-    animation = threading.Thread(target=spinner, args=(stop_signal,), daemon=True)
-    animation.start()
-    try:
-        answer = run_agent(question, messages)
-    except errors.APIError as e:
-        answer = f"Sorry, I couldn't reach Gemini (error {e.code}). Please try again later."
-    finally:
-        stop_signal.set()
-        animation.join()
+        stop_signal = threading.Event()
+        animation = threading.Thread(target=spinner, args=(stop_signal,), daemon=True)
+        animation.start()
+        try:
+            answer = run_agent(question, messages)
+        except Exception as e:
+            answer = f"Sorry, something went wrong ({type(e).__name__}). Please try again."
+        finally:
+            stop_signal.set()
+            animation.join()
 
     print("DocPilot:", answer, "\n")
