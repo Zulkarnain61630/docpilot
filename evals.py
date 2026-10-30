@@ -2,8 +2,21 @@ import json
 import time
 from pathlib import Path
 
-from agent import run_agent
+from agent import client, run_agent
 
+JUDGE_MODEL = "gemini-3.8-flash"
+
+
+def judge(question, answer, rubric):
+    prompt = (
+        "You are grading an AI assistant's answer.\n\n"
+        f"Question: {question}\n"
+        f"Answer: {answer}\n"
+        f"Rubric: {rubric}\n\n"
+        "Does the answer meet the rubric? Reply with only one word: PASS or FAIL."
+    )
+    response = client.models.generate_content(model=JUDGE_MODEL, contents=prompt)
+    return (response.text or "").strip().upper().startswith("PASS")
 
 def tools_used(messages):
     names = []
@@ -41,6 +54,8 @@ for case in cases:
     for word in case.get("must_not_include", []):
         if word.lower() in answer.lower():
             problems.append(f"answer contains '{word}'")
+    if "judge" in case and not judge(case["question"], answer, case["judge"]):
+        problems.append("the AI judge said the answer does not meet the rubric")
 
     if problems:
         print("FAIL:", "; ".join(problems))

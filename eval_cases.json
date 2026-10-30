@@ -31,5 +31,16 @@
       "expected_tool": "search_documents",
       "forbidden_tool": "web_search",
       "must_include": ["Qadri"]
-    }
+    },
+    {
+        "id": "unknown-policy",
+        "question": "What is the policy on bringing pets to class?",
+        "expected_tool": "search_documents",
+        "judge": "The answer must say the documents do not cover this. It must not invent a policy."
+      },
+      {
+        "id": "late-wording",
+        "question": "My homework was 2 days late. How much did I lose?",
+        "judge": "The answer must say the student loses 20% (10% per day for 2 days), in any wording."
+      }
   ]
