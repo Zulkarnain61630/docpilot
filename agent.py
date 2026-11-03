@@ -229,9 +229,8 @@ TOOLS = {
 model_down_until = {}
 @observe(as_type="generation", name="gemini-call")
 def ask_gemini(messages):
-    for model in MODELS:
-        if time.time() < model_down_until.get(model, 0):
-            continue
+    available = [m for m in MODELS if time.time() >= model_down_until.get(m, 0)]
+    for model in available or MODELS:
         try:
             response = client.models.generate_content(
                 model=model,
