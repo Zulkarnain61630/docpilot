@@ -68,3 +68,6 @@ for case in cases:
 
 failed = len(cases) - passed - errors
 print(f"\nPassed: {passed}   Failed: {failed}   Errors: {errors}   (out of {len(cases)})")
+
+from langfuse import get_client
+get_client().flush()
